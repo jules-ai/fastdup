@@ -1,41 +1,122 @@
-def get_fastdup_flow_summary():
+# fastdup_flow_summary.py
+
+def preprocess_data(input_dir, bounding_boxes=None):
     """
-    Returns a textual summary of the core processing flow of fastdup.
-    Extracted to avoid complex third-party library dependencies and nested references.
+    第一步：数据读取与预处理 (Data Ingestion & Preprocessing)
+    - 读取图像、视频帧。
+    - 如果存在预设的边界框（BBox）或启用了目标检测，则进行裁剪（Crop）。
+    - 对图像进行缩放、标准化，准备输入到特征提取模型。
     """
-    summary = """
-# Fastdup 核心处理全流程
+    print("1. [数据处理] 正在读取和预处理数据...")
+    images = ["img1_processed", "img2_processed", "img3_processed"]
+    if bounding_boxes:
+         print("   -> 应用边界框裁剪图像。")
+    return images
 
-fastdup 的整体执行流程主要分为四个核心阶段：
+def extract_features(images, model_type="default"):
+    """
+    第二步：特征提取 (Feature Extraction / Embeddings)
+    - 将处理后的图像送入模型（如 DINOv2, CLIP 或轻量级默认模型）。
+    - 提取高维特征向量（如 576 维）。
+    """
+    print(f"2. [特征提取] 使用 {model_type} 模型提取特征向量 (Embeddings)...")
+    # 模拟生成的特征向量 (Pseudo embeddings)
+    embeddings = {
+        "img1": [0.1, 0.9, 0.2],
+        "img2": [0.11, 0.88, 0.19],
+        "img3": [0.8, 0.1, 0.9]
+    }
+    return embeddings
 
-1. **初始化 (`fastdup.create`)**
-   - **入口文件**: `fastdup_create.py` (`create` 函数)
-   - **核心动作**: 初始化并返回一个 `Fastdup` 对象（该对象继承自 `FastdupController`）。
-   - **详细步骤**: 设置工作目录 (`work_dir`) 和输入数据目录 (`input_dir`)。如果没有提供 `work_dir`，默认会创建一个名为 'work_dir' 的文件夹。
+def build_nn_index_and_search(embeddings, k=2, metric="cosine"):
+    """
+    第三步：最近邻搜索与索引构建 (Nearest Neighbor Search & Indexing)
+    - 构建向量索引（Brute Force 或 ANN 如 HNSW）。
+    - 计算每个特征向量最近的 k 个邻居。
+    """
+    print(f"3. [向量检索] 构建索引并使用 {metric} 距离寻找最近的 {k} 个邻居...")
+    # 模拟近邻搜索结果：(邻居ID, 相似度分数)
+    nn_results = {
+        "img1": [("img2", 0.98)],
+        "img2": [("img1", 0.98)],
+        "img3": [] # 假设 img3 没有相似度极高的邻居
+    }
+    return nn_results
 
-2. **执行调用 (`Fastdup.run`)**
-   - **入口文件**: `engine.py` (`Fastdup` 类的 `run` 方法)
-   - **核心动作**: 封装核心的执行过程。
-   - **详细步骤**: 配置默认的分析参数（例如：距离度量 distance='cosine', 聚类阈值 cc_threshold=0.96, 离群值百分比 outlier_percentile=0.05）。收集这些参数并调用父类的 `run` 方法 (`FastdupController.run`)。
+def construct_similarity_graph(nn_results, threshold=0.90, outlier_percentile=0.05):
+    """
+    第四步：相似度图构建与离群值计算 (Similarity Graph & Outliers)
+    - 滤除低于阈值 threshold 的边，构建稀疏相似度图。
+    - 根据距离分布，将最底部的 percentile 标记为离群值 (Outliers)。
+    """
+    print(f"4. [图构建] 过滤低于 {threshold} 相似度的边，构建相似度图，并计算离群值...")
+    graph_edges = []
+    outliers = []
 
-3. **核心调度控制 (`FastdupController.run`)**
-   - **入口文件**: `fastdup_controller.py` (`FastdupController` 类的 `run` 方法)
-   - **核心动作**: 这是在 C++ 引擎运行前后的主要业务控制逻辑。
-   - **详细步骤**:
-     - **a. 参数准备 (`_init_run`)**: 验证输入，推断数据类型（image 图像, bbox 边界框, crop 裁剪图），准备运行模式，并创建或清空输出文件夹。
-     - **b. 参数配置 (`set_fastdup_kwargs`)**: 编译所有的 fastdup 参数，并格式化 `turi_param` 字符串，用于将配置项传递给底层的 C++ 引擎。
-     - **c. 输入格式化 (`_set_fastdup_input`)**: 将输入目录或标注文件整理成 C++ 引擎能读取的格式（通常会生成一个临时的 CSV 文件）。
-     - **d. C++ 引擎执行 (`fastdup.run(...)`)**: **这是真正的计算核心。** 它调用底层的 C++ 扩展二进制库，执行特征提取 (feature extraction)、最近邻查找 (nearest neighbors)、相似度图生成 (similarity graph)、连通分量分析 (connected components) 以及图像统计计算。
-     - **e. 后处理映射 (`_create_img_mapping`)**: 读取 C++ 生成的 `atrain_mapping.csv` 和 `atrain_bad_files.csv`，将系统内部的 fastdup 数字 ID 映射回用户原始的文件名和标注信息。
-     - **f. 标注数据扩充 (`_expand_annot_df` 和 `_index_annot_df`)**: 将原始的用户标注与 C++ 的结果合并。处理裁剪图映射，标记损坏的文件，并对每项数据进行状态标记（如 'VALID' 或 'MISSING_IMAGE'）。
-     - **g. 保存产物 (`_save_artifacts`)**: 存储配置 JSON，并将最终的映射和标注信息序列化 (pickle)，以便后续的快速加载读取。
+    for src, neighbors in nn_results.items():
+        if not neighbors:
+             outliers.append(src)
+        for dst, score in neighbors:
+            if score >= threshold:
+                graph_edges.append((src, dst, score))
 
-4. **结果获取 (例如 `similarity()`, `outliers()`, `connected_components()`)**
-   - **入口文件**: `fastdup_controller.py`
-   - **核心动作**: 对 C++ 引擎输出的结果 CSV 进行懒加载 (Lazy loading) 和数据合并。
-   - **详细步骤**: 像 `similarity()` 这类方法，会读取底层的 CSV 结果文件（如 `similarity.csv`），将它们与用户的标注数据帧和截图数据帧合并，最终返回结构化的 pandas DataFrame 给用户。
-"""
-    return summary.strip()
+    return graph_edges, outliers
+
+def find_connected_components(graph_edges, cc_threshold=0.96):
+    """
+    第五步：连通分量聚类 (Connected Components / Clustering)
+    - 在相似度图上运行连通分量算法。
+    - 采用更高的 cc_threshold 确认高度相似的图像簇。
+    """
+    print(f"5. [聚类分析] 使用阈值 {cc_threshold} 提取连通分量 (相似图像簇)...")
+    # 模拟聚类结果
+    clusters = {
+        "cluster_1": ["img1", "img2"]
+    }
+    return clusters
+
+def compute_image_statistics(images):
+    """
+    第六步：图像统计特征计算 (Image Statistics Computation)
+    - 计算模糊度 (Blur)、亮度 (Brightness)、对比度等基础质量指标。
+    """
+    print("6. [统计计算] 计算图像的模糊度、亮度等统计指标...")
+    stats = {
+        "img1": {"blur": 120.5, "brightness": 200},
+        "img2": {"blur": 115.0, "brightness": 195},
+        "img3": {"blur": 45.2, "brightness": 50} # 可能模糊且过暗
+    }
+    return stats
+
+def fastdup_computational_flow(input_dir="data/images"):
+    """
+    Fastdup 核心运算流程主控函数。
+    整合以上所有计算步骤，展示数据的流转和处理逻辑。
+    """
+    print(f"=== 开始 Fastdup 核心运算流程分析: 目录 {input_dir} ===\n")
+
+    # 1. 数据预处理
+    processed_images = preprocess_data(input_dir)
+
+    # 2. 特征提取
+    embeddings = extract_features(processed_images)
+
+    # 3. 最近邻检索
+    nn_results = build_nn_index_and_search(embeddings, k=2)
+
+    # 4. 图构建与离群值寻找
+    graph_edges, outliers = construct_similarity_graph(nn_results, threshold=0.90)
+
+    # 5. 聚类
+    clusters = find_connected_components(graph_edges, cc_threshold=0.96)
+
+    # 6. 统计计算
+    stats = compute_image_statistics(processed_images)
+
+    print("\n=== 运算流程结束，最终输出产物 ===")
+    print(f"- 相似图像簇 (Clusters): {clusters}")
+    print(f"- 离群图像 (Outliers): {outliers}")
+    print(f"- 图像统计 (Stats): {stats}")
 
 if __name__ == "__main__":
-    print(get_fastdup_flow_summary())
+    fastdup_computational_flow()
